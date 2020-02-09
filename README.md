@@ -12,11 +12,13 @@ harden and thoroughly test it as your own solution.
 Consists of code examples of a persistent delayed class, inbound adapter, 
 request, business service and operation, a demo production, message router and 
 associated routing rules and transformation to transform an ADT_A08 into the 
-message delay request, and an example ADT_A08.
+message delay request, and an example 
+[ADT_A08](https://github.com/toncatgm/Message-Delay-example/tree/master/msg).
 
-The code is supplied in XML and UDL format.
-The XML is in src/xml.
-The UDL is in src/cls.
+The code is supplied in 
+[XML](https://github.com/toncatgm/Message-Delay-example/tree/master/src/xml) and 
+[UDL](https://github.com/toncatgm/Message-Delay-example/tree/master/src/cls/Demo/MessageDelay) 
+format.
 
 ## Basic instructions 
 Once you have imported and compiled the classes, 
