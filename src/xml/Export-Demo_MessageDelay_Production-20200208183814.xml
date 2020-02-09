@@ -1,0 +1,508 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Export generator="Cache" version="25" zv="Cache for Windows (x86-64) 2018.1 (Build 184U)" ts="2020-02-08 18:39:36">
+<Class name="Demo.HL7.MsgRouter.Functions">
+<Description>
+Functions to use in rule definitions for the sample message router production.</Description>
+<ClassType/>
+<ProcedureBlock>1</ProcedureBlock>
+<Super>Ens.Rule.FunctionSet</Super>
+<TimeChanged>64910,32413</TimeChanged>
+<TimeCreated>60211,45594.129234</TimeCreated>
+
+<Method name="DayOfWeek">
+<Description>
+Returns the ordinal position of the day in the week, 
+where 1 is Sunday, 2 is Monday, and so on.</Description>
+<Final>1</Final>
+<ClassMethod>1</ClassMethod>
+<CodeMode>expression</CodeMode>
+<ReturnType>%Integer</ReturnType>
+<Implementation><![CDATA[$zd($H,10)
+]]></Implementation>
+</Method>
+
+<Method name="TimeInSeconds">
+<Description>
+Returns the time as a number of seconds since midnight.</Description>
+<Final>1</Final>
+<ClassMethod>1</ClassMethod>
+<CodeMode>expression</CodeMode>
+<ReturnType>%Integer</ReturnType>
+<Implementation><![CDATA[$p($H,",",2)
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="Demo.MessageDelay.ADTA08ToMessageDelayRequestDTL">
+<Super>Ens.DataTransformDTL</Super>
+<TimeChanged>65417,65971.905999</TimeChanged>
+<TimeCreated>65417,65971.905999</TimeCreated>
+<DependsOn>EnsLib.HL7.Message,Demo.MessageDelay.Request</DependsOn>
+
+<Parameter name="IGNOREMISSINGSOURCE">
+<Default>1</Default>
+</Parameter>
+
+<Parameter name="REPORTERRORS">
+<Default>1</Default>
+</Parameter>
+
+<Parameter name="TREATEMPTYREPEATINGFIELDASNULL">
+<Default>0</Default>
+</Parameter>
+
+<XData name="DTL">
+<XMLNamespace>http://www.intersystems.com/dtl</XMLNamespace>
+<Data><![CDATA[
+<transform sourceClass='EnsLib.HL7.Message' targetClass='Demo.MessageDelay.Request' sourceDocType='2.5:ADT_A01' create='new' language='objectscript' >
+<assign value='source.%Id()' property='target.MessageId' action='set' />
+<assign value='source.{PID:PatientID.IDNumber}' property='target.NHSNumber' action='set' />
+<assign value='source.{PV1:PreadmitNumber}' property='target.AccountNumber' action='set' />
+</transform>
+]]></Data>
+</XData>
+</Class>
+
+
+<Class name="Demo.MessageDelay.Delayed">
+<Super>%Library.Persistent,%Populate</Super>
+<TimeChanged>65417,66474.151905</TimeChanged>
+<TimeCreated>65417,65895.248445</TimeCreated>
+
+<Property name="Timestamp">
+<Type>%Library.TimeStamp</Type>
+<InitialExpression>$zdt($zts,3)</InitialExpression>
+</Property>
+
+<Property name="NHSNumber">
+<Type>%String</Type>
+</Property>
+
+<Property name="AccountNumber">
+<Type>%String</Type>
+</Property>
+
+<Property name="MessageId">
+<Type>%Integer</Type>
+</Property>
+
+<Index name="idxNHSAccNumbers">
+<Properties>NHSNumber,AccountNumber</Properties>
+<Unique>1</Unique>
+</Index>
+
+<Method name="InsertUpdate">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pNHSNumber,pAccountNumber,pMessageId,pStatus:%Status=$$$OK</FormalSpec>
+<ReturnType>Demo.MessageDelay.Delayed</ReturnType>
+<Implementation><![CDATA[
+    /*
+    The discharge summary goes through the normal transformation and then gets routed to the Discharge Summary Delayed Business Operation.
+    The Discharge Summary Delayed Business Operation queries the Discharge Summary Delayed Table for the existence of a record for NHS Number and Account Number. 
+    If found it updates the MessageID to the new MessageID else it inserts a new record (INSERT OR UPDATE may be a good choice here): 
+    select * from DischargeSummaryDelayedTable where NHSNumber=? and AccountNumber=?
+    if exists then
+        update DischargeSummaryDelayedTable set MessageID=? where NHSNumber=? and AccountNumber=?
+    else         
+        insert into  DischargeSummaryDelayedTable (NHSNumber,AccountNumber,Timestamp, MessageID) values (?,?,?,?)
+    */
+    set delayed = ##class(Demo.MessageDelay.Delayed).idxNHSAccNumbersOpen(pNHSNumber,pAccountNumber)
+    if ""=delayed {
+        set delayed = ##class(Demo.MessageDelay.Delayed).%New()
+        set delayed.NHSNumber = pNHSNumber
+        set delayed.AccountNumber = pAccountNumber
+    }
+    ;     
+    set delayed.MessageId = pMessageId
+    set pStatus = delayed.%Save()
+    return delayed
+]]></Implementation>
+</Method>
+
+<Query name="Process">
+<Type>%SQLQuery</Type>
+<FormalSpec>pDelay:%Integer,pTimestampNow={$zdt($zts,3)}</FormalSpec>
+<SqlProc>1</SqlProc>
+<SqlQuery><![CDATA[    /*
+    The Discharge Summary Latest Business Service:
+        Every Call Interval queries the Discharge Summary Delayed Table for records where the time difference 
+        between the current time and the Timestamp >= to the Delay setting: 
+            select MessageID from DischargeSummaryDelayedTable where (Now – Timestamp) >= Delay
+            Loops over the result set to send message and on success delete record from the Discharge Summary Delayed Table
+                Send message with MessageID to the Downstream Systems Business Service
+                delete from DischargeSummaryDelayedTable where MessageID=?
+
+    s ts1="2020-02-07 21:08:00"          
+    s ts2="2020-02-08 01:08:00"          
+    s h=$system.SQL.DATEDIFF("n",ts1,ts2)
+    w
+    h=240
+    ts1="2020-02-07 21:08:00"
+    ts2="2020-02-08 01:08:00" 
+
+    s count = ##class(Demo.MessageDelay.Delayed).Populate()
+    d ##class(%ResultSet).RunQuery("Demo.MessageDelay.Delayed","Process",240)
+    */
+select MessageId from Demo_MessageDelay.Delayed
+ where DATEDIFF('n',Timestamp,:pTimestampNow) >= :pDelay
+ order by MessageId]]></SqlQuery>
+</Query>
+
+<Method name="DeleteByMessageId">
+<ClassMethod>1</ClassMethod>
+<FormalSpec>pMessageId</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+    set status = $$$OK
+    &sql(delete from Demo_MessageDelay.Delayed where MessageId = :pMessageId)
+    if 0'=SQLCODE {
+        set status = $$$ERROR($$$GeneralError,"Delete of record with MessageId="_pMessageId_" failed with SQLCODE="_SQLCODE)    
+    }
+    return status
+]]></Implementation>
+</Method>
+
+<Storage name="Default">
+<Type>%Library.CacheStorage</Type>
+<DataLocation>^Demo.MessageDelay.DelayedD</DataLocation>
+<DefaultData>DelayedDefaultData</DefaultData>
+<IdLocation>^Demo.MessageDelay.DelayedD</IdLocation>
+<IndexLocation>^Demo.MessageDelay.DelayedI</IndexLocation>
+<StreamLocation>^Demo.MessageDelay.DelayedS</StreamLocation>
+<Data name="DelayedDefaultData">
+<Structure>listnode</Structure>
+<Subscript/>
+<Value name="1">
+<Value>%%CLASSNAME</Value>
+</Value>
+<Value name="2">
+<Value>Timestamp</Value>
+</Value>
+<Value name="3">
+<Value>NHSNumber</Value>
+</Value>
+<Value name="4">
+<Value>AccountNumber</Value>
+</Value>
+<Value name="5">
+<Value>MessageId</Value>
+</Value>
+</Data>
+</Storage>
+</Class>
+
+
+<Class name="Demo.MessageDelay.InboundAdapter">
+<Super>Ens.InboundAdapter</Super>
+<TimeChanged>65417,66297.561693</TimeChanged>
+<TimeCreated>65417,66297.561693</TimeCreated>
+
+<Parameter name="SETTINGS">
+<Default>Delay:Message Delay</Default>
+</Parameter>
+
+<Property name="Delay">
+<Description>
+Delay in minutes.</Description>
+<Type>%Integer</Type>
+<InitialExpression>240</InitialExpression>
+</Property>
+
+<Method name="OnTask">
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+    /*
+    The Discharge Summary Latest Business Service:
+    Every Call Interval queries the Discharge Summary Delayed Table for records where the time difference between the current time and the Timestamp >= to the Delay setting: 
+    select MessageID from DischargeSummaryDelayedTable where (Now – Timestamp) >= Delay
+    Loops over the result set to send message and on success delete record from the Discharge Summary Delayed Table
+        Send message with MessageID to the Downstream Systems Business Service
+        delete from DischargeSummaryDelayedTable where MessageID=?
+ 
+        s ts1="2020-02-07 21:08:00"          
+        s ts2="2020-02-08 01:08:00"          
+        s h=$system.SQL.DATEDIFF("n",ts1,ts2)
+        w
+        h=240
+        ts1="2020-02-07 21:08:00"
+        ts2="2020-02-08 01:08:00" 
+        
+        ; Map debug global to IRISTEMP
+        set ^temp.debug($namespace,$ClassName(),messageId,"ProcessInput()","status") = $system.Status.GetErrorText(status)
+        set ^temp.debug($namespace,$ClassName(),messageId,"delete","status") = $system.Status.GetErrorText(status)
+    */
+    set statement = ##class(%SQL.Statement).%New()
+ 	set status = statement.%PrepareClassQuery("Demo.MessageDelay.Delayed", "Process")
+    if $$$ISOK(status) { 
+        #dim statementResult as %SQL.StatementResult = statement.%Execute(..Delay)
+        while statementResult.%Next(.status) {
+            quit:$$$ISERR(status)
+            set messageId = statementResult.%Get("MessageId")
+            set stringContainer = ##class(Ens.StringContainer).%New(messageId) 
+            set status = ..BusinessHost.ProcessInput(stringContainer)
+            if $$$ISOK(status) {
+                set status = ##class(Demo.MessageDelay.Delayed).DeleteByMessageId(messageId)
+                set ^temp.debug($namespace,$ClassName(),messageId,"delete","status") = $system.Status.GetErrorText(status)
+            }   
+        }
+    }
+    return status
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="Demo.MessageDelay.Operation">
+<Super>Ens.BusinessOperation</Super>
+<TimeChanged>65417,66213.623831</TimeChanged>
+<TimeCreated>65417,66213.623831</TimeCreated>
+
+<Method name="OnMessage">
+<Description>
+This is the default message handler.  All request types not declared in the message map are delivered here</Description>
+<FormalSpec>pRequest:Demo.MessageDelay.Request,*pResponse:%Library.Persistent</FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+    /*  
+    The discharge summary goes through the normal transformation and then gets routed to the Discharge Summary Delayed Business Operation.
+    The Discharge Summary Delayed Business Operation queries the Discharge Summary Delayed Table for the existence of a record for NHS Number and Account Number. 
+    If found it updates the MessageID to the new MessageID else it inserts a new record (INSERT OR UPDATE may be a good choice here): 
+    select * from DischargeSummaryDelayedTable where NHSNumber=? and AccountNumber=?
+    if exists then
+        update DischargeSummaryDelayedTable set MessageID=? where NHSNumber=? and AccountNumber=?
+    else         
+        insert into  DischargeSummaryDelayedTable (NHSNumber,AccountNumber,Timestamp, MessageID) values (?,?,?,?)
+    */
+    
+    set status = $$$OK
+
+    set delayed = ##class(Demo.MessageDelay.Delayed).InsertUpdate(pRequest.NHSNumber,pRequest.AccountNumber,pRequest.MessageId,.status)
+
+    return status
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Class name="Demo.MessageDelay.Production.AlertRule">
+<Description>
+</Description>
+<Super>Ens.Rule.Definition</Super>
+<TimeChanged>65417,66675.38821</TimeChanged>
+<TimeCreated>65417,66675.38821</TimeCreated>
+
+<Parameter name="RuleAssistClass">
+<Default>EnsLib.MsgRouter.RuleAssist</Default>
+</Parameter>
+
+<XData name="RuleDefinition">
+<XMLNamespace>http://www.intersystems.com/rule</XMLNamespace>
+<Data><![CDATA[
+<ruleDefinition alias="" context="EnsLib.MsgRouter.RoutingEngine" production="Demo.MessageDelay.Production">
+<ruleSet name="" effectiveBegin="" effectiveEnd="">
+<rule name="">
+</rule>
+</ruleSet>
+</ruleDefinition>
+]]></Data>
+</XData>
+</Class>
+
+
+<Class name="Demo.MessageDelay.Production">
+<Super>Ens.Production</Super>
+<TimeChanged>65417,66949.59789</TimeChanged>
+<TimeCreated>65417,66168.796617</TimeCreated>
+
+<XData name="ProductionDefinition">
+<Data><![CDATA[
+<Production Name="Demo.MessageDelay.Production" TestingEnabled="true" LogGeneralTraceEvents="true">
+  <Description></Description>
+  <ActorPoolSize>2</ActorPoolSize>
+  <Item Name="MsgRouter" Category="" ClassName="EnsLib.HL7.MsgRouter.RoutingEngine" PoolSize="1" Enabled="true" Foreground="false" Comment="This handles message routing logic." LogTraceEvents="false" Schedule="">
+    <Setting Target="Host" Name="Validation"></Setting>
+    <Setting Target="Host" Name="BusinessRuleName">Demo.MessageDelay.Production.RoutingRule</Setting>
+    <Setting Target="Host" Name="BadMessageHandler">BadMessageHandler</Setting>
+  </Item>
+  <Item Name="BadMessageHandler" Category="" ClassName="EnsLib.HL7.Operation.FileOperation" PoolSize="1" Enabled="false" Foreground="false" Comment="Bad messages are sent to this operation." LogTraceEvents="false" Schedule="">
+  </Item>
+  <Item Name="Ens.Alert" Category="" ClassName="EnsLib.MsgRouter.RoutingEngine" PoolSize="0" Enabled="true" Foreground="false" Comment="This handles Alert routing logic." LogTraceEvents="false" Schedule="">
+    <Setting Target="Host" Name="BusinessRuleName">Demo.MessageDelay.Production.AlertRule</Setting>
+  </Item>
+  <Item Name="EMailAlert" Category="" ClassName="EnsLib.EMail.AlertOperation" PoolSize="1" Enabled="false" Foreground="false" Comment="This sends alerts via e-mail." LogTraceEvents="false" Schedule="">
+  </Item>
+  <Item Name="PagerAlert" Category="" ClassName="EnsLib.EMail.AlertOperation" PoolSize="1" Enabled="false" Foreground="false" Comment="This sends alerts to a pager via e-mail." LogTraceEvents="false" Schedule="">
+  </Item>
+  <Item Name="HL7FileService" Category="" ClassName="EnsLib.HL7.Service.FileService" PoolSize="1" Enabled="false" Foreground="false" Comment="This is a default HL7 File Service." LogTraceEvents="false" Schedule="">
+    <Setting Target="Host" Name="TargetConfigNames">MsgRouter</Setting>
+  </Item>
+  <Item Name="HL7FileOperation" Category="" ClassName="EnsLib.HL7.Operation.FileOperation" PoolSize="1" Enabled="true" Foreground="false" Comment="This is a default HL7 File Operation." LogTraceEvents="false" Schedule="">
+    <Setting Target="Adapter" Name="FilePath">c:\ensemble\HL7\Out</Setting>
+  </Item>
+  <Item Name="Demo.MessageDelay.Service" Category="" ClassName="Demo.MessageDelay.Service" PoolSize="1" Enabled="true" Foreground="false" Comment="" LogTraceEvents="true" Schedule="">
+    <Setting Target="Adapter" Name="Delay">1</Setting>
+    <Setting Target="Host" Name="TargetHostname">HL7FileOperation</Setting>
+    <Setting Target="Adapter" Name="CallInterval">5</Setting>
+  </Item>
+  <Item Name="Demo.MessageDelay.Operation" Category="" ClassName="Demo.MessageDelay.Operation" PoolSize="1" Enabled="true" Foreground="false" Comment="" LogTraceEvents="false" Schedule="">
+  </Item>
+</Production>
+]]></Data>
+</XData>
+</Class>
+
+
+<Class name="Demo.MessageDelay.Production.RoutingRule">
+<Description>
+</Description>
+<Super>Ens.Rule.Definition</Super>
+<TimeChanged>65417,66618.151648</TimeChanged>
+<TimeCreated>65417,66618.151648</TimeCreated>
+
+<Parameter name="RuleAssistClass">
+<Default>EnsLib.HL7.MsgRouter.RuleAssist</Default>
+</Parameter>
+
+<XData name="RuleDefinition">
+<XMLNamespace>http://www.intersystems.com/rule</XMLNamespace>
+<Data><![CDATA[
+<ruleDefinition alias="" context="EnsLib.HL7.MsgRouter.RoutingEngine" production="Demo.MessageDelay.Production">
+<ruleSet name="" effectiveBegin="" effectiveEnd="">
+<rule name="" disabled="false">
+<when condition="1">
+<send transform="Demo.MessageDelay.ADTA08ToMessageDelayRequestDTL" target="Demo.MessageDelay.Operation"></send>
+<return></return>
+</when>
+</rule>
+<rule name="">
+<constraint name="source" value="HL7FileService"></constraint>
+<when condition="1">
+<send transform="" target="HL7FileOperation"></send>
+</when>
+</rule>
+</ruleSet>
+</ruleDefinition>
+]]></Data>
+</XData>
+</Class>
+
+
+<Class name="Demo.MessageDelay.Request">
+<Description>
+The Discharge Summary message needs to be transformed into this request. </Description>
+<Super>Ens.Request</Super>
+<TimeChanged>65417,66474.226389</TimeChanged>
+<TimeCreated>65417,66091.168125</TimeCreated>
+
+<Property name="NHSNumber">
+<Type>%String</Type>
+</Property>
+
+<Property name="AccountNumber">
+<Type>%String</Type>
+</Property>
+
+<Property name="MessageId">
+<Type>%Integer</Type>
+</Property>
+
+<Storage name="Default">
+<Type>%Library.CacheStorage</Type>
+<DefaultData>RequestDefaultData</DefaultData>
+<Data name="RequestDefaultData">
+<Structure>listnode</Structure>
+<Subscript>"Request"</Subscript>
+<Value name="1">
+<Value>NHSNumber</Value>
+</Value>
+<Value name="2">
+<Value>AccountNumber</Value>
+</Value>
+<Value name="3">
+<Value>MessageId</Value>
+</Value>
+</Data>
+</Storage>
+</Class>
+
+
+<Class name="Demo.MessageDelay.Service">
+<Super>Ens.BusinessService</Super>
+<TimeChanged>65417,66465.260757</TimeChanged>
+<TimeCreated>65417,66035.998799</TimeCreated>
+
+<Parameter name="ADAPTER">
+<Default>Demo.MessageDelay.InboundAdapter</Default>
+</Parameter>
+
+<Parameter name="SETTINGS">
+<Default><![CDATA[TargetHostname:Message Delay:selector?context={Ens.ContextSearch/ProductionItems?targets=1&productionName=@productionId}]]></Default>
+</Parameter>
+
+<Property name="TargetHostname">
+<Type>%String</Type>
+<InitialExpression>"HL7FileOperation"</InitialExpression>
+</Property>
+
+<Method name="OnProcessInput">
+<FormalSpec><![CDATA[pStringContainer:Ens.StringContainer,*pOutput:%RegisteredObject,&pHint:%String]]></FormalSpec>
+<ReturnType>%Status</ReturnType>
+<Implementation><![CDATA[
+    set messageId = pStringContainer.StringValue
+    set request = ##class(EnsLib.HL7.Message).%OpenId(messageId)
+    set status = ..SendRequestAsync(..TargetHostname,request)
+	return status
+]]></Implementation>
+</Method>
+</Class>
+
+
+<Project name="EnsExportProduction_2020-02-08 18-38-14_658+0" LastModified="2020-02-08 18:39:36.553522">
+  <ProjectDescription>Studio Project generated from Ensemble Production 'Demo.MessageDelay.Production' at 2020-02-08 18:38:14.658 UTC</ProjectDescription>
+  <Items>
+    <ProjectItem name="Demo.HL7.MsgRouter.Functions" type="CLS"></ProjectItem>
+    <ProjectItem name="Demo.MessageDelay.ADTA08ToMessageDelayRequestDTL" type="CLS"></ProjectItem>
+    <ProjectItem name="Demo.MessageDelay.Delayed" type="CLS"></ProjectItem>
+    <ProjectItem name="Demo.MessageDelay.InboundAdapter" type="CLS"></ProjectItem>
+    <ProjectItem name="Demo.MessageDelay.Operation" type="CLS"></ProjectItem>
+    <ProjectItem name="Demo.MessageDelay.Production" type="CLS"></ProjectItem>
+    <ProjectItem name="Demo.MessageDelay.Production.AlertRule" type="CLS"></ProjectItem>
+    <ProjectItem name="Demo.MessageDelay.Production.RoutingRule" type="CLS"></ProjectItem>
+    <ProjectItem name="Demo.MessageDelay.Request" type="CLS"></ProjectItem>
+    <ProjectItem name="Demo.MessageDelay.Service" type="CLS"></ProjectItem>
+    <ProjectItem name="EnsExportNotes.EnsExportProduction_2020-02-08 18-38-14_658+0.PTD" type="PTD"></ProjectItem>
+  </Items>
+</Project>
+
+
+<Document name="EnsExportNotes.EnsExportProduction_2020-02-08 18-38-14_658+0.PTD"><ProjectTextDocument name="EnsExportNotes.EnsExportProduction_2020-02-08 18-38-14_658+0" description="Export Notes for export EnsExportProduction_2020-02-08 18-38-14_658+0">
+<![CDATA[<Deployment>
+<Creation>
+<Machine>WIN-ESKQ6N0HF7F</Machine>
+<Instance>HEALTHSHARE</Instance>
+<Namespace>ENSDEMO</Namespace>
+<SourceProduction>Demo.MessageDelay.Production</SourceProduction>
+<Username>_SYSTEM</Username>
+<UTC>2020-02-08 18:39:36.558</UTC>
+</Creation>
+<Notes>
+</Notes>
+<Contents>
+<ExportProject>EnsExportProduction_2020-02-08 18-38-14_658+0</ExportProject>
+<Item num="1">Demo.HL7.MsgRouter.Functions.CLS</Item>
+<Item num="2">Demo.MessageDelay.ADTA08ToMessageDelayRequestDTL.CLS</Item>
+<Item num="3">Demo.MessageDelay.Delayed.CLS</Item>
+<Item num="4">Demo.MessageDelay.InboundAdapter.CLS</Item>
+<Item num="5">Demo.MessageDelay.Operation.CLS</Item>
+<Item num="6">Demo.MessageDelay.Production.AlertRule.CLS</Item>
+<Item num="7">Demo.MessageDelay.Production.CLS</Item>
+<Item num="8">Demo.MessageDelay.Production.RoutingRule.CLS</Item>
+<Item num="9">Demo.MessageDelay.Request.CLS</Item>
+<Item num="10">Demo.MessageDelay.Service.CLS</Item>
+</Contents>
+<ProductionClassInExport>Demo.MessageDelay.Production</ProductionClassInExport>
+</Deployment>
+
+]]></ProjectTextDocument>
+</Document></Export>
