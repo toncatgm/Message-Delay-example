@@ -2,13 +2,11 @@
  Interoperability example of delaying a message
 
 ## Disclaimer
-*******************************************************************************
 Use or operation of this code is subject to acceptance of the license 
 available in the code repository for this code. This code is provided for 
 demonstration purposes only, is unsupported and should not be put directly 
 into production. If you use any of this demonstration code, you need to modify, 
 harden and thoroughly test it as your own solution.
-*******************************************************************************
 
 ## About   
 Consists of code examples of a persistent delayed class, inbound adapter, 
