@@ -14,9 +14,9 @@ request, business service and operation, a demo production, message router and
 associated routing rules and transformation to transform an ADT_A08 into the 
 message delay request, and an example ADT_A08.
 
-The code is supplied in XML and UDL format. 
-The XML is in src/xml.    
-The UDL is in src/cls.  
+The code is supplied in XML and UDL format.
+The XML is in src/xml.
+The UDL is in src/cls.
 
 ## Basic instructions 
 Once you have imported and compiled the classes, 
